@@ -1,0 +1,39 @@
+{
+  "name": "sayloop-backend",
+  "version": "1.0.0",
+  "description": "Sayloop backend API — language learning + debate platform",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "migrate": "prisma migrate dev",
+    "migrate:prod": "prisma migrate deploy",
+    "seed": "node src/prisma/seed.js",
+    "studio": "prisma studio",
+    "generate": "prisma generate",
+    "lint": "eslint src/"
+  },
+  "prisma": {
+    "schema": "src/prisma/schema.prisma",
+    "seed": "node src/prisma/seed.js"
+  },
+  "dependencies": {
+    "@clerk/clerk-sdk-node": "^4.13.0",
+    "@prisma/client": "^5.0.0",
+    "axios": "^1.13.5",
+    "cors": "^2.8.6",
+    "dotenv": "^16.0.0",
+    "express": "^4.22.1",
+    "express-rate-limit": "^7.0.0",
+    "morgan": "^1.10.0",
+    "node-cron": "^3.0.0",
+    "openai": "^4.0.0",
+    "socket.io": "^4.8.3",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0",
+    "nodemon": "^3.0.0",
+    "prisma": "^5.0.0"
+  }
+}

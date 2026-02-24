@@ -1,0 +1,346 @@
+// ============================================================================
+// Prisma Schema — Sayloop (Clerk Auth)
+// Database: PostgreSQL (Neon)
+// Auth: Clerk (no password/jwt fields in User)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CORE MODELS
+// ============================================================================
+
+model Course {
+  id       Int     @id
+  imageSrc String? @map("image_src") @db.VarChar(255)
+  title    String  @db.VarChar(255)
+
+  users              User[]
+  sections           Section[]
+  units              Unit[]
+  lessonCompletions  LessonCompletion[]
+  userCourseProgress UserCourseProgress[]
+
+  @@map("course")
+}
+
+model User {
+  id              Int       @id @default(autoincrement())
+  clerkId         String    @unique @map("clerk_id") @db.VarChar(255)
+  username        String?   @unique @db.VarChar(255)
+  firstName       String?   @map("first_name") @db.VarChar(255)
+  lastName        String?   @map("last_name") @db.VarChar(255)
+  email           String    @db.VarChar(255)
+  pfpSource       String?   @map("pfp_source") @db.VarChar(255)
+  points          Int       @default(0)
+  streakLength    Int       @default(0) @map("streak_length")
+  currentCourseId Int?      @map("current_course_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  lastSubmission  DateTime? @map("last_submission")
+
+  currentCourse         Course?                @relation(fields: [currentCourseId], references: [id], onDelete: SetNull)
+  exerciseAttempts      ExerciseAttempt[]
+  lessonCompletions     LessonCompletion[]
+  userCourseProgress    UserCourseProgress[]
+  userDailyQuests       UserDailyQuest[]
+  userMonthlyChallenges UserMonthlyChallenge[]
+  following             Follow[]               @relation("Follower")
+  followers             Follow[]               @relation("Followed")
+  matchesRequested      Match[]                @relation("MatchRequester")
+  matchesReceived       Match[]                @relation("MatchReceiver")
+
+  @@index([points(sort: Desc), id(sort: Asc)], map: "ix_users_points_desc")
+  @@index([clerkId],          map: "ix_users_clerk_id")
+  @@index([currentCourseId],  map: "ix_users_current_course")
+  @@map("users")
+}
+
+// ============================================================================
+// GAMIFICATION
+// ============================================================================
+
+model QuestDefinition {
+  id           Int     @id @default(autoincrement())
+  code         String  @unique @db.VarChar(255)
+  target       Int
+  rewardPoints Int     @map("reward_points")
+  active       Boolean @default(true)
+
+  userDailyQuests UserDailyQuest[]
+
+  @@map("quest_definition")
+}
+
+model MonthlyChallengeDefinition {
+  id           Int     @id @default(autoincrement())
+  code         String  @unique @db.VarChar(255)
+  target       Int
+  rewardPoints Int     @map("reward_points")
+  active       Boolean @default(true)
+
+  userMonthlyChallenges UserMonthlyChallenge[]
+
+  @@map("monthly_challenge_definition")
+}
+
+model UserDailyQuest {
+  userId        Int       @map("user_id")
+  questDefId    Int       @map("quest_def_id")
+  date          DateTime  @db.Date
+  progress      Int       @default(0)
+  completedAt   DateTime? @map("completed_at")
+  rewardClaimed Boolean   @default(false) @map("reward_claimed")
+
+  user     User            @relation(fields: [userId],     references: [id], onDelete: Cascade)
+  questDef QuestDefinition @relation(fields: [questDefId], references: [id], onDelete: Cascade)
+
+  @@id([userId, questDefId, date])
+  @@index([userId, date], map: "idx_user_daily_quest_user_date")
+  @@index([questDefId],   map: "idx_user_daily_quest_def_id")
+  @@map("user_daily_quest")
+}
+
+model UserMonthlyChallenge {
+  userId         Int       @map("user_id")
+  challengeDefId Int       @map("challenge_def_id")
+  year           Int
+  month          Int
+  progress       Int       @default(0)
+  completedAt    DateTime? @map("completed_at")
+  rewardClaimed  Boolean   @default(false) @map("reward_claimed")
+
+  user         User                       @relation(fields: [userId],         references: [id], onDelete: Cascade)
+  challengeDef MonthlyChallengeDefinition @relation(fields: [challengeDefId], references: [id], onDelete: Cascade)
+
+  @@id([userId, challengeDefId, year, month])
+  @@index([userId, year, month], map: "idx_user_monthly_challenge_user_period")
+  @@index([challengeDefId],      map: "idx_user_monthly_challenge_def_id")
+  @@map("user_monthly_challenge")
+}
+
+// ============================================================================
+// CONTENT STRUCTURE
+// ============================================================================
+
+model Section {
+  id         Int     @id @default(autoincrement())
+  courseId   Int     @map("course_id")
+  orderIndex Int     @map("order_index")
+  title      String? @db.VarChar(255)
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  units  Unit[]
+
+  @@unique([courseId, orderIndex], map: "uq_section_order")
+  @@index([courseId, orderIndex],  map: "idx_sections_course_order")
+  @@map("sections")
+}
+
+model Unit {
+  id            Int      @id @default(autoincrement())
+  title         String   @db.VarChar(255)
+  description   String?  @db.VarChar(255)
+  courseId      Int      @map("course_id")
+  sectionId     Int      @map("section_id")
+  orderIndex    Int      @map("order_index")
+  animationPath String?  @map("animation_path") @db.VarChar(255)
+  color         String?  @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  course   Course    @relation(fields: [courseId],  references: [id], onDelete: Cascade)
+  section  Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  lessons  Lesson[]
+  pathIcon PathIcon?
+
+  @@unique([courseId, orderIndex], map: "uq_course_order")
+  @@index([courseId, orderIndex],  map: "idx_units_course_order")
+  @@index([sectionId],             map: "idx_units_section")
+  @@map("units")
+}
+
+model PathIcon {
+  unitId Int    @id @map("unit_id")
+  icon   String @db.VarChar(255)
+
+  unit Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@map("path_icons")
+}
+
+model Lesson {
+  id         Int     @id @default(autoincrement())
+  title      String  @db.VarChar(255)
+  unitId     Int     @map("unit_id")
+  orderIndex Int     @map("order_index")
+  type       String  @default("Lesson") @db.VarChar(20)
+  lessonType String? @map("lesson_type") @db.VarChar(255)
+
+  unit               Unit                 @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  exercises          Exercise[]
+  lessonCompletions  LessonCompletion[]
+  userCourseProgress UserCourseProgress[]
+
+  @@unique([unitId, orderIndex], map: "uq_lesson_order")
+  @@index([unitId, orderIndex],  map: "idx_lessons_unit_order")
+  @@map("lessons")
+}
+
+// ============================================================================
+// EXERCISES
+// ============================================================================
+
+model Exercise {
+  id         Int    @id @default(autoincrement())
+  lessonId   Int    @map("lesson_id")
+  type       String @db.VarChar(255)
+  prompt     String @db.VarChar(255)
+  orderIndex Int    @map("order_index")
+
+  lesson           Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  exerciseOptions  ExerciseOption[]
+  exerciseAttempts ExerciseAttempt[]
+
+  @@unique([lessonId, orderIndex], map: "uq_exercise_order")
+  @@index([lessonId, orderIndex],  map: "idx_exercises_lesson_order")
+  @@map("exercises")
+}
+
+model ExerciseOption {
+  id          Int     @id @default(autoincrement())
+  exerciseId  Int     @map("exercise_id")
+  content     String  @db.VarChar(255)
+  imageUrl    String? @map("image_url") @db.VarChar(255)
+  isCorrect   Boolean @map("is_correct")
+  answerOrder Int?    @map("answer_order")
+
+  exercise               Exercise               @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  exerciseAttempts       ExerciseAttempt[]
+  exerciseAttemptOptions ExerciseAttemptOption[]
+
+  @@index([exerciseId], map: "idx_exercise_options_exercise")
+  @@map("exercise_options")
+}
+
+model ExerciseAttempt {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  exerciseId  Int      @map("exercise_id")
+  optionId    Int      @map("option_id")
+  score       Int?
+  isChecked   Boolean  @default(false) @map("is_checked")
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  user                   User                   @relation(fields: [userId],     references: [id], onDelete: Cascade)
+  exercise               Exercise               @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  option                 ExerciseOption         @relation(fields: [optionId],   references: [id], onDelete: Cascade)
+  exerciseAttemptOptions ExerciseAttemptOption[]
+
+  @@index([userId, submittedAt(sort: Desc)], map: "idx_exercise_attempts_user")
+  @@index([exerciseId],                      map: "idx_exercise_attempts_exercise")
+  @@map("exercise_attempts")
+}
+
+model ExerciseAttemptOption {
+  id        Int @id @default(autoincrement())
+  attemptId Int @map("attempt_id")
+  optionId  Int @map("option_id")
+  position  Int
+
+  attempt ExerciseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  option  ExerciseOption  @relation(fields: [optionId],  references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, position], map: "uq_attempt_position")
+  @@index([attemptId],            map: "idx_exercise_attempt_option_attempt")
+  @@index([optionId],             map: "idx_exercise_attempt_option_option")
+  @@map("exercise_attempt_option")
+}
+
+// ============================================================================
+// PROGRESS TRACKING
+// ============================================================================
+
+model LessonCompletion {
+  userId      Int      @map("user_id")
+  courseId    Int      @map("course_id")
+  lessonId    Int      @map("lesson_id")
+  score       Int
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  user   User   @relation(fields: [userId],   references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@id([userId, lessonId])
+  @@index([userId, courseId, completedAt(sort: Desc)], map: "idx_lesson_completions_user_course")
+  @@index([lessonId],                                  map: "idx_lesson_completions_lesson")
+  @@map("lesson_completions")
+}
+
+model UserCourseProgress {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @map("user_id")
+  courseId        Int      @map("course_id")
+  currentLessonId Int      @map("current_lesson_id")
+  isComplete      Boolean  @default(false) @map("is_complete")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user          User   @relation(fields: [userId],          references: [id], onDelete: Cascade)
+  course        Course @relation(fields: [courseId],         references: [id], onDelete: Cascade)
+  currentLesson Lesson @relation(fields: [currentLessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId], map: "uq_user_course")
+  @@index([userId],            map: "idx_user_course_progress_user")
+  @@index([currentLessonId],   map: "idx_user_course_progress_lesson")
+  @@map("user_course_progress")
+}
+
+// ============================================================================
+// SOCIAL
+// ============================================================================
+
+model Follow {
+  id         Int      @id @default(autoincrement())
+  followerId Int      @map("follower_id")
+  followedId Int      @map("followed_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  follower User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followed User @relation("Followed", fields: [followedId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followedId], map: "uq_follows")
+  @@index([followerId],              map: "idx_follows_follower")
+  @@index([followedId],              map: "idx_follows_followed")
+  @@map("follows")
+}
+
+// ============================================================================
+// MATCHMAKING
+// ============================================================================
+
+model Match {
+  id          Int      @id @default(autoincrement())
+  requesterId Int      @map("requester_id")
+  receiverId  Int      @map("receiver_id")
+  topic       String   @db.VarChar(100)
+  status      String   @default("PENDING") @db.VarChar(20)
+  // status values: PENDING | ACCEPTED | REJECTED | COMPLETED | EXPIRED
+  sessionId   String?  @map("session_id") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  requester User @relation("MatchRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver  User @relation("MatchReceiver",  fields: [receiverId],  references: [id], onDelete: Cascade)
+
+  @@index([requesterId],       map: "idx_matches_requester")
+  @@index([receiverId],        map: "idx_matches_receiver")
+  @@index([status, createdAt], map: "idx_matches_status_created")
+  @@index([sessionId],         map: "idx_matches_session")
+  @@map("matches")
+}
