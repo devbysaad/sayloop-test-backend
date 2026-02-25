@@ -33,7 +33,10 @@ const app = express();
 // ── Global Middleware ─────────────────────────────────
 app.use(logger);
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: [
+    'http://localhost:5173',
+    'https://sayloop-test-jncm.vercel.app'
+  ],
   credentials: true,
 }));
 app.use(express.json());
