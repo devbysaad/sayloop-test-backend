@@ -35,7 +35,7 @@ app.use(logger);
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://sayloop-test-jncm.vercel.app'
+    'https://sayloop-test.vercel.app'
   ],
   credentials: true,
 }));
