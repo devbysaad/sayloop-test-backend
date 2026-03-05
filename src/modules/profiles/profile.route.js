@@ -1,37 +1,30 @@
-const express = require('express');
-const router = express.Router();
-
+const express    = require('express');
+const router     = express.Router();
 const controller = require('./profile.controller');
+const { validate } = require('../../middleware/validate.middleware');
 const {
-  validate,
   searchPartnersSchema,
   getProfileStatsSchema,
   getPublicProfileSchema,
-  updateBioSchema,
 } = require('./profile.validation');
-const { requireAuth } = require('../../middleware/auth.middleware');
+const { protect } = require('../../middleware/auth.middleware');
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-
-// GET  /api/profiles/search          → search potential partners (must be before /:userId)
-router.get(
-  '/search',
-  requireAuth,
+// GET /api/profiles/search  — must be declared BEFORE /:userId to avoid route shadowing
+router.get('/search',
+  protect,
   validate(searchPartnersSchema),
   controller.searchPartners,
 );
 
-// GET  /api/profiles/:userId/stats   → profile stats for a specific user
-router.get(
-  '/:userId/stats',
-  requireAuth,
+// GET /api/profiles/:userId/stats
+router.get('/:userId/stats',
+  protect,
   validate(getProfileStatsSchema),
   controller.getProfileStats,
 );
 
-// GET  /api/profiles/:userId         → public profile
-router.get(
-  '/:userId',
+// GET /api/profiles/:userId  — public, no auth required
+router.get('/:userId',
   validate(getPublicProfileSchema),
   controller.getPublicProfile,
 );

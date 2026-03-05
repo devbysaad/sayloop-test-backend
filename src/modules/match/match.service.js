@@ -1,30 +1,28 @@
 const prisma = require('../../config/database');
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-const LEVEL_THRESHOLDS = { Diamond: 10000, Gold: 5000, Silver: 2000, Bronze: 500 };
-
-function getLevel(points) {
-  if (points >= LEVEL_THRESHOLDS.Diamond) return 'Diamond';
-  if (points >= LEVEL_THRESHOLDS.Gold) return 'Gold';
-  if (points >= LEVEL_THRESHOLDS.Silver) return 'Silver';
-  if (points >= LEVEL_THRESHOLDS.Bronze) return 'Bronze';
-  return 'Rookie';
-}
-
-// Expiry: pending matches older than 5 minutes are auto-expired
 const MATCH_TTL_MS = 5 * 60 * 1000;
 
-// ─── Service ──────────────────────────────────────────────────────────────────
 const matchesService = {
-  /**
-   * Creates a new match request. Prevents duplicate pending requests.
-   */
+
   async requestMatch({ userId, partnerId, topic }) {
     if (userId === partnerId) {
       throw Object.assign(new Error('Cannot match with yourself'), { status: 400 });
     }
 
-    // Check for existing pending match between these users
+    // Verify both users exist
+    const [requester, receiver] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId }, select: { id: true } }),
+      prisma.user.findUnique({ where: { id: partnerId }, select: { id: true } }),
+    ]);
+
+    if (!requester) {
+      throw Object.assign(new Error('Your user account was not found. Please refresh and try again.'), { status: 404 });
+    }
+    if (!receiver) {
+      throw Object.assign(new Error('The selected partner was not found. They may have deleted their account.'), { status: 404 });
+    }
+
+    // Check for existing PENDING match between these users
     const existing = await prisma.match.findFirst({
       where: {
         status: 'PENDING',
@@ -33,83 +31,90 @@ const matchesService = {
           { requesterId: partnerId, receiverId: userId },
         ],
       },
+      include: {
+        requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
+        receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
+      },
     });
 
     if (existing) {
-      // If it was expired, delete and recreate
-      const age = Date.now() - existing.createdAt.getTime();
-      if (age > MATCH_TTL_MS) {
-        await prisma.match.update({ where: { id: existing.id }, data: { status: 'EXPIRED' } });
-      } else {
-        return existing;
-      }
+      // If it's still pending, return it — don't create a duplicate
+      return existing;
     }
+
+    // Mark any stale matches between these two users as ABANDONED
+    // (e.g. if they previously accepted a match but never completed the session)
+    await prisma.match.updateMany({
+      where: {
+        status: { in: ['ACCEPTED', 'CONFIRMED', 'IN_SESSION'] },
+        OR: [
+          { requesterId: userId, receiverId: partnerId },
+          { requesterId: partnerId, receiverId: userId },
+        ],
+      },
+      data: { status: 'ABANDONED' },
+    });
 
     const match = await prisma.match.create({
       data: { requesterId: userId, receiverId: partnerId, topic, status: 'PENDING' },
+      include: {
+        requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
+        receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
+      },
     });
 
-    return {
-      matchId: match.id,
-      partnerId: match.receiverId,
-      topic: match.topic,
-      status: match.status.toLowerCase(),
-    };
+    return match;
   },
 
-  /**
-   * Accept a match request. Returns the match with session context.
-   */
   async acceptMatch(matchId, userId) {
-    const match = await prisma.match.findUnique({ where: { id: matchId } });
+    // Atomic: only update if status is still PENDING — prevents race conditions
+    const updated = await prisma.match.updateMany({
+      where: { id: matchId, receiverId: userId, status: 'PENDING' },
+      data: { status: 'ACCEPTED', sessionId: `session_${matchId}_${Date.now()}` },
+    });
 
-    if (!match) throw Object.assign(new Error('Match not found'), { status: 404 });
-    if (match.receiverId !== userId) throw Object.assign(new Error('Not authorised'), { status: 403 });
-    if (match.status !== 'PENDING') throw Object.assign(new Error('Match is no longer pending'), { status: 409 });
-
-    // Check TTL
-    const age = Date.now() - match.createdAt.getTime();
-    if (age > MATCH_TTL_MS) {
-      await prisma.match.update({ where: { id: matchId }, data: { status: 'EXPIRED' } });
-      throw Object.assign(new Error('Match request expired'), { status: 410 });
+    if (updated.count === 0) {
+      // Figure out why it failed for a better error message
+      const match = await prisma.match.findUnique({ where: { id: matchId } });
+      if (!match) throw Object.assign(new Error('Match not found'), { status: 404 });
+      if (match.receiverId !== userId) throw Object.assign(new Error('Not authorised'), { status: 403 });
+      if (match.status !== 'PENDING') throw Object.assign(new Error('Match is no longer pending'), { status: 409 });
+      throw Object.assign(new Error('Failed to accept match'), { status: 500 });
     }
 
-    const sessionId = `session_${matchId}_${Date.now()}`;
-    const updated = await prisma.match.update({
+    // Fetch the full updated match with relations
+    const match = await prisma.match.findUnique({
       where: { id: matchId },
-      data: { status: 'ACCEPTED', sessionId },
+      include: {
+        requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
+        receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
+      },
     });
 
-    return {
-      matchId: updated.id,
-      sessionId: updated.sessionId,
-      topic: updated.topic,
-      requesterId: updated.requesterId,
-      receiverId: updated.receiverId,
-    };
+    return match;
   },
 
-  /**
-   * Reject a match request.
-   */
   async rejectMatch(matchId, userId) {
-    const match = await prisma.match.findUnique({ where: { id: matchId } });
+    const updated = await prisma.match.updateMany({
+      where: { id: matchId, receiverId: userId, status: 'PENDING' },
+      data: { status: 'REJECTED' },
+    });
 
-    if (!match) throw Object.assign(new Error('Match not found'), { status: 404 });
-    if (match.receiverId !== userId) throw Object.assign(new Error('Not authorised'), { status: 403 });
-    if (match.status !== 'PENDING') throw Object.assign(new Error('Match is no longer pending'), { status: 409 });
+    if (updated.count === 0) {
+      const match = await prisma.match.findUnique({ where: { id: matchId } });
+      if (!match) throw Object.assign(new Error('Match not found'), { status: 404 });
+      if (match.receiverId !== userId) throw Object.assign(new Error('Not authorised'), { status: 403 });
+      if (match.status !== 'PENDING') throw Object.assign(new Error('Match is no longer pending'), { status: 409 });
+      throw Object.assign(new Error('Failed to reject match'), { status: 500 });
+    }
 
-    await prisma.match.update({ where: { id: matchId }, data: { status: 'REJECTED' } });
     return { matchId, status: 'rejected' };
   },
 
-  /**
-   * Get all active (pending or accepted) matches for a user.
-   */
   async getActiveMatches(userId) {
     const matches = await prisma.match.findMany({
       where: {
-        status: { in: ['PENDING', 'ACCEPTED'] },
+        status: { in: ['PENDING', 'ACCEPTED', 'CONFIRMED'] },
         OR: [{ requesterId: userId }, { receiverId: userId }],
       },
       orderBy: { createdAt: 'desc' },
@@ -119,19 +124,13 @@ const matchesService = {
       },
     });
 
-    return matches.map((m) => ({
-      ...m,
-      status: m.status.toLowerCase(),
-    }));
+    return matches.map(m => ({ ...m, status: m.status.toLowerCase() }));
   },
 
-  /**
-   * Get match history (completed/rejected/expired) for a user.
-   */
   async getMatchHistory(userId, page = 0, limit = 20) {
     const skip = page * limit;
     const where = {
-      status: { in: ['COMPLETED', 'REJECTED', 'EXPIRED'] },
+      status: { in: ['COMPLETED', 'REJECTED', 'EXPIRED', 'ABANDONED'] },
       OR: [{ requesterId: userId }, { receiverId: userId }],
     };
 
@@ -150,7 +149,7 @@ const matchesService = {
     ]);
 
     return {
-      data: matches.map((m) => ({ ...m, status: m.status.toLowerCase() })),
+      data: matches.map(m => ({ ...m, status: m.status.toLowerCase() })),
       total,
       page,
       limit,
@@ -158,11 +157,10 @@ const matchesService = {
     };
   },
 
-  /**
-   * Mark a match as COMPLETED (called after session ends).
-   */
   async completeMatch(sessionId) {
-    const match = await prisma.match.findFirst({ where: { sessionId, status: 'ACCEPTED' } });
+    const match = await prisma.match.findFirst({
+      where: { sessionId, status: { in: ['ACCEPTED', 'CONFIRMED', 'IN_SESSION'] } },
+    });
     if (!match) return null;
     return prisma.match.update({ where: { id: match.id }, data: { status: 'COMPLETED' } });
   },

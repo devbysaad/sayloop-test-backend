@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const required = ['DATABASE_URL', 'PORT', 'FRONTEND_URL'];
+const required = ['DATABASE_URL', 'PORT', 'FRONTEND_URL', 'CLERK_SECRET_KEY'];
 
 required.forEach((key) => {
   if (!process.env[key]) throw new Error(`Missing env variable: ${key}`);

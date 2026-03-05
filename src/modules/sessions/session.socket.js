@@ -7,6 +7,11 @@ const queue = new Map();
 // socketId → sessionId
 const socketRooms = new Map();
 
+/** Allow other modules (e.g. match.socket) to register a socket → room mapping */
+function setSocketRoom(socketId, sessionId) {
+  socketRooms.set(socketId, sessionId);
+}
+
 function enqueue(topic, entry) {
   if (!queue.has(topic)) queue.set(topic, []);
   queue.set(topic, queue.get(topic).filter((e) => e.userId !== entry.userId));
@@ -46,7 +51,8 @@ function registerSessionHandlers(io) {
             partnerId: opponent.userId,
             topic,
           });
-          const accepted = await matchesService.acceptMatch(matchRecord.matchId, opponent.userId);
+          // requestMatch returns the full match object (has .id, not .matchId)
+          const accepted = await matchesService.acceptMatch(matchRecord.id, opponent.userId);
           sessionId = accepted.sessionId;
         } catch (err) {
           console.error('[Socket] Match DB error:', err.message);
@@ -131,4 +137,4 @@ function registerSessionHandlers(io) {
   });
 }
 
-module.exports = { registerSessionHandlers };
+module.exports = { registerSessionHandlers, setSocketRoom };

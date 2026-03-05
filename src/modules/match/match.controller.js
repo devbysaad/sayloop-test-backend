@@ -1,4 +1,5 @@
 const matchesService = require('./match.service');
+const { emitToUser } = require('./match.socket');
 
 // ─── Controller ───────────────────────────────────────────────────────────────
 
@@ -9,7 +10,32 @@ const matchesService = require('./match.service');
 const requestMatch = async (req, res) => {
   try {
     const result = await matchesService.requestMatch(req.body);
-    return res.status(201).json({ success: true, data: result });
+    const io = req.app.get('io');
+
+    // Emit real-time notification to the receiver
+    if (io && result.status === 'PENDING') {
+      // Debug: check if receiver has any sockets in their room
+      const room = `user:${result.receiverId}`;
+      const socketsInRoom = await io.in(room).fetchSockets();
+      console.log(`[Match:requestMatch] Emitting match:request-received to room=${room}, sockets in room=${socketsInRoom.length}, socketIds=${socketsInRoom.map(s => s.id).join(',')}`);
+
+      emitToUser(io, result.receiverId, 'match:request-received', {
+        matchId: result.id,
+        topic: result.topic,
+        requester: result.requester,
+      });
+    } else {
+      console.warn(`[Match:requestMatch] NOT emitting: io=${!!io}, status=${result.status}`);
+    }
+
+    return res.status(201).json({
+      success: true, data: {
+        matchId: result.id,
+        partnerId: result.receiverId,
+        topic: result.topic,
+        status: result.status.toLowerCase(),
+      }
+    });
   } catch (err) {
     const status = err.status ?? 500;
     return res.status(status).json({ success: false, message: err.message });
@@ -18,15 +44,37 @@ const requestMatch = async (req, res) => {
 
 /**
  * POST /api/matches/:matchId/accept
- * Requires authenticated userId in req.user or body
+ * Requires authenticated userId in req.dbUserId
  */
 const acceptMatch = async (req, res) => {
   try {
     const { matchId } = req.params;
-    // userId comes from Clerk middleware (req.auth.userId mapped to db id)
     const userId = req.dbUserId;
     const result = await matchesService.acceptMatch(Number(matchId), userId);
-    return res.status(200).json({ success: true, data: result });
+    const io = req.app.get('io');
+
+    // Emit match:accepted to BOTH users
+    if (io && result) {
+      const payload = {
+        matchId: result.id,
+        sessionId: result.sessionId,
+        topic: result.topic,
+        requester: result.requester,
+        receiver: result.receiver,
+      };
+      emitToUser(io, result.requesterId, 'match:accepted', payload);
+      emitToUser(io, result.receiverId, 'match:accepted', payload);
+    }
+
+    return res.status(200).json({
+      success: true, data: {
+        matchId: result.id,
+        sessionId: result.sessionId,
+        topic: result.topic,
+        requesterId: result.requesterId,
+        receiverId: result.receiverId,
+      }
+    });
   } catch (err) {
     const status = err.status ?? 500;
     return res.status(status).json({ success: false, message: err.message });
@@ -40,7 +88,19 @@ const rejectMatch = async (req, res) => {
   try {
     const { matchId } = req.params;
     const userId = req.dbUserId;
+
+    // Get the match first so we know who the requester is
+    const prisma = require('../../config/database');
+    const match = await prisma.match.findUnique({ where: { id: Number(matchId) } });
+
     const result = await matchesService.rejectMatch(Number(matchId), userId);
+    const io = req.app.get('io');
+
+    // Notify the requester that their match was rejected
+    if (io && match) {
+      emitToUser(io, match.requesterId, 'match:rejected', { matchId: Number(matchId) });
+    }
+
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     const status = err.status ?? 500;

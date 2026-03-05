@@ -9,8 +9,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================================================
@@ -45,6 +45,12 @@ model User {
   createdAt       DateTime  @default(now()) @map("created_at")
   lastSubmission  DateTime? @map("last_submission")
 
+  // ── Onboarding fields ──────────────────────────────────────────────────────
+  // Set during onboarding, used for partner matching
+  learningLanguage  String?   @map("learning_language") @db.VarChar(10)
+  // JSON array of interest IDs e.g. ["travel", "tech", "food"]
+  interests         Json?     @default("[]")
+
   currentCourse         Course?                @relation(fields: [currentCourseId], references: [id], onDelete: SetNull)
   exerciseAttempts      ExerciseAttempt[]
   lessonCompletions     LessonCompletion[]
@@ -59,6 +65,7 @@ model User {
   @@index([points(sort: Desc), id(sort: Asc)], map: "ix_users_points_desc")
   @@index([clerkId],          map: "ix_users_clerk_id")
   @@index([currentCourseId],  map: "ix_users_current_course")
+  @@index([learningLanguage], map: "ix_users_learning_language")
   @@map("users")
 }
 
@@ -330,7 +337,7 @@ model Match {
   receiverId  Int      @map("receiver_id")
   topic       String   @db.VarChar(100)
   status      String   @default("PENDING") @db.VarChar(20)
-  // status values: PENDING | ACCEPTED | REJECTED | COMPLETED | EXPIRED
+  // status: PENDING | ACCEPTED | REJECTED | COMPLETED | EXPIRED
   sessionId   String?  @map("session_id") @db.VarChar(255)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
