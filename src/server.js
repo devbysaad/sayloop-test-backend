@@ -14,6 +14,10 @@ const PORT = process.env.PORT || 4000;
 const server = http.createServer(app);
 
 const prisma = database.prisma ?? database;
+
+// ── Online user tracking ──────────────────────────────────────────────────────
+const onlineUsers = new Set();
+app.set('onlineUsers', onlineUsers);
 const connectFn = database.connectWithRetry ?? null;
 
 const io = new Server(server, {
@@ -44,6 +48,7 @@ io.use(async (socket, next) => {
         if (user) {
           socket.dbUserId = user.id;
           socket.join(`user:${user.id}`);
+          onlineUsers.add(user.id);
           console.log(`[Socket] JWT OK — dbUserId:${user.id} socketId:${socket.id}, joined room user:${user.id}`);
           return next();
         }
@@ -67,6 +72,7 @@ io.use(async (socket, next) => {
       if (user) {
         socket.dbUserId = user.id;
         socket.join(`user:${user.id}`);
+        onlineUsers.add(user.id);
         console.log(`[Socket] clerkId OK — dbUserId:${user.id} socketId:${socket.id}, joined room user:${user.id}`);
         return next();
       }
@@ -85,6 +91,20 @@ io.use(async (socket, next) => {
 
   console.warn('[Socket] Rejected — no token or clerkId in handshake');
   return next(new Error('Unauthorized: provide token or clerkId'));
+});
+
+// Clean up online tracking on disconnect
+io.on('connection', (socket) => {
+  socket.on('disconnect', async () => {
+    if (!socket.dbUserId) return;
+    // Only remove if this user has no other active sockets
+    const room = `user:${socket.dbUserId}`;
+    const sockets = await io.in(room).fetchSockets();
+    if (sockets.length === 0) {
+      onlineUsers.delete(socket.dbUserId);
+      console.log(`[Socket] User ${socket.dbUserId} is now offline`);
+    }
+  });
 });
 
 registerSessionHandlers(io);

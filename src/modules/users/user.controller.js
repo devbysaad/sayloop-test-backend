@@ -5,17 +5,19 @@ const { success, error } = require('../../utils/response');
 const syncUser = async (req, res) => {
   try {
     const clerkId = req.auth?.userId;
-    if (!clerkId) {
-      console.warn('[syncUser] req.auth.userId is empty — Clerk token verification likely failed');
-      return error(res, 'Unauthorized — no valid Clerk session', 401);
-    }
+    console.log('[syncUser] clerkId:', clerkId);
+    console.log('[syncUser] body:', req.body);
+    
+    if (!clerkId) return error(res, 'Unauthorized — no valid Clerk session', 401);
+    
     const { email, firstName, lastName, pfpSource } = req.body;
     if (!email) return error(res, 'email is required', 400);
 
     const user = await userService.syncUser(clerkId, { email, firstName, lastName, pfpSource });
+    console.log('[syncUser] success:', user.id);
     return success(res, user, 'User synced successfully', 201);
   } catch (err) {
-    console.error('[syncUser]', err?.message ?? err);
+    console.error('[syncUser] ERROR:', err); // ← full error here
     return error(res, 'Failed to sync user');
   }
 };
@@ -60,7 +62,8 @@ const getMyStats = async (req, res) => {
 // Returns other users for the match browse tab — excludes the caller automatically.
 const browseUsers = async (req, res) => {
   try {
-    const users = await userService.getBrowseUsers(req.dbUserId);
+    const onlineUsers = req.app.get('onlineUsers') || new Set();
+    const users = await userService.getBrowseUsers(req.dbUserId, onlineUsers);
     return success(res, users, 'Browse users fetched');
   } catch (err) {
     console.error('[browseUsers]', err?.message ?? err);
