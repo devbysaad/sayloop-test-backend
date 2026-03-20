@@ -62,7 +62,28 @@ const getMyStats = async (req, res) => {
 // Returns other users for the match browse tab — excludes the caller automatically.
 const browseUsers = async (req, res) => {
   try {
-    const onlineUsers = req.app.get('onlineUsers') || new Set();
+    const io = req.app.get('io');
+    const matchRoom = io?.sockets.adapter.rooms.get('page:match');
+    const homeRoom = io?.sockets.adapter.rooms.get('page:home');
+
+    // All socket IDs currently on /match or /home
+    const activeSocketIds = new Set([
+      ...(matchRoom ? [...matchRoom] : []),
+      ...(homeRoom ? [...homeRoom] : []),
+    ]);
+
+    // Map socket IDs to dbUserIds
+    const activeDbUserIds = new Set();
+    if (io && activeSocketIds.size > 0) {
+      const sockets = await io.fetchSockets();
+      for (const s of sockets) {
+        if (activeSocketIds.has(s.id) && s.dbUserId) {
+          activeDbUserIds.add(s.dbUserId);
+        }
+      }
+    }
+
+    const onlineUsers = activeDbUserIds;
     const users = await userService.getBrowseUsers(req.dbUserId, onlineUsers);
     return success(res, users, 'Browse users fetched');
   } catch (err) {

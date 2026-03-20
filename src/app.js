@@ -14,7 +14,9 @@ const leaderboardRoute = require('./modules/leaderboard/leaderboard.route');
 const levelRoute = require('./modules/levels/level.route');
 const heartRoute = require('./modules/hearts/heart.route');
 const notificationRoute = require('./modules/notifications/notification.route');
-const profileRoute = require('./modules/profiles/profile.route');  // ← fixed: was profile.route
+const profileRoute = require('./modules/profiles/profile.route');
+const aiRoute = require('./modules/ai/ai.route');
+const economyRoute = require('./modules/economy/economy.routes');
 
 const app = express();
 
@@ -60,6 +62,8 @@ app.use(paths.LEVELS, levelRoute);
 app.use(paths.HEARTS, heartRoute);
 app.use(paths.NOTIFICATIONS, notificationRoute);
 app.use(paths.PROFILES, profileRoute);
+app.use('/api/ai', aiRoute);
+app.use('/api/economy', economyRoute);
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => {

@@ -1,5 +1,6 @@
 const matchesService = require('./match.service');
 const { emitToUser } = require('./match.socket');
+const prisma = require('../../config/database');
 
 // ─── Controller ───────────────────────────────────────────────────────────────
 
@@ -14,18 +15,28 @@ const requestMatch = async (req, res) => {
 
     // Emit real-time notification to the receiver
     if (io && result.status === 'PENDING') {
-      // Debug: check if receiver has any sockets in their room
-      const room = `user:${result.receiverId}`;
-      const socketsInRoom = await io.in(room).fetchSockets();
-      console.log(`[Match:requestMatch] Emitting match:request-received to room=${room}, sockets in room=${socketsInRoom.length}, socketIds=${socketsInRoom.map(s => s.id).join(',')}`);
+      const roomMatch = `page:match:user:${result.receiverId}`;
+      const roomHome = `page:home:user:${result.receiverId}`;
 
-      emitToUser(io, result.receiverId, 'match:request-received', {
-        matchId: result.id,
-        topic: result.topic,
-        requester: result.requester,
-      });
-    } else {
-      console.warn(`[Match:requestMatch] NOT emitting: io=${!!io}, status=${result.status}`);
+      const receiverIsOnMatchPage = io.sockets.adapter.rooms.has(roomMatch);
+      const receiverIsOnHomePage = io.sockets.adapter.rooms.has(roomHome);
+
+      if (receiverIsOnMatchPage || receiverIsOnHomePage) {
+        // Emit live popup only if they are on /match or /home
+        io.to(roomMatch).to(roomHome).emit('match:request-received', {
+          matchId: result.id,
+          topic: result.topic,
+          requester: result.requester,
+        });
+      } else {
+        // Just emit a badge count update to their general user room
+        const pendingCount = await prisma.match.count({
+          where: { receiverId: result.receiverId, status: 'PENDING' },
+        });
+        io.to(`user:${result.receiverId}`).emit('match:badge_count', {
+          pendingRequests: pendingCount,
+        });
+      }
     }
 
     return res.status(201).json({

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.0",
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^5.0.0",
     "axios": "^1.13.5",
     "cors": "^2.8.6",

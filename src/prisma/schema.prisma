@@ -33,6 +33,19 @@ model User {
   currentCourseId       Int?                   @map("current_course_id")
   createdAt             DateTime               @default(now()) @map("created_at")
   lastSubmission        DateTime?              @map("last_submission")
+
+  // ── Economy fields ──────────────────────────────────────────────────────────
+  xp                    Int                    @default(0)
+  gems                  Int                    @default(0)
+  level                 Int                    @default(1)
+  lastActiveDate        DateTime?              @map("last_active_date")
+  totalMatches          Int                    @default(0) @map("total_matches")
+  totalWins             Int                    @default(0) @map("total_wins")
+  totalDraws            Int                    @default(0) @map("total_draws")
+  totalResigns          Int                    @default(0) @map("total_resigns")
+  xpThisWeek            Int                    @default(0) @map("xp_this_week")
+  weekStartDate         DateTime?              @map("week_start_date")
+
   exerciseAttempts      ExerciseAttempt[]
   followers             Follow[]               @relation("Followed")
   following             Follow[]               @relation("Follower")
@@ -42,9 +55,13 @@ model User {
   userCourseProgress    UserCourseProgress[]
   userDailyQuests       UserDailyQuest[]
   userMonthlyChallenges UserMonthlyChallenge[]
+  xpTransactions        XPTransaction[]
+  gemTransactions       GemTransaction[]
   currentCourse         Course?                @relation(fields: [currentCourseId], references: [id])
 
   @@index([points(sort: Desc), id], map: "ix_users_points_desc")
+  @@index([xp(sort: Desc), id], map: "ix_users_xp_desc")
+  @@index([xpThisWeek(sort: Desc), id], map: "ix_users_xp_week_desc")
   @@index([clerkId], map: "ix_users_clerk_id")
   @@index([currentCourseId], map: "ix_users_current_course")
   @@map("users")
@@ -274,20 +291,83 @@ model Follow {
 }
 
 model Match {
-  id          Int      @id @default(autoincrement())
-  requesterId Int      @map("requester_id")
-  receiverId  Int      @map("receiver_id")
-  topic       String   @db.VarChar(100)
-  status      String   @default("PENDING") @db.VarChar(20)
-  sessionId   String?  @map("session_id") @db.VarChar(255)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
-  receiver    User     @relation("MatchReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
-  requester   User     @relation("MatchRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  id          Int           @id @default(autoincrement())
+  requesterId Int           @map("requester_id")
+  receiverId  Int           @map("receiver_id")
+  topic       String        @db.VarChar(100)
+  status      String        @default("PENDING") @db.VarChar(20)
+  sessionId   String?       @map("session_id") @db.VarChar(255)
+  outcome     MatchOutcome?
+  xpAwarded   Boolean       @default(false) @map("xp_awarded")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at")
+  receiver    User          @relation("MatchReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  requester   User          @relation("MatchRequester", fields: [requesterId], references: [id], onDelete: Cascade)
 
   @@index([requesterId], map: "idx_matches_requester")
   @@index([receiverId], map: "idx_matches_receiver")
   @@index([status, createdAt], map: "idx_matches_status_created")
   @@index([sessionId], map: "idx_matches_session")
   @@map("matches")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────────
+
+enum MatchOutcome {
+  WIN_REQUESTER
+  WIN_RECEIVER
+  DRAW
+  RESIGN_REQUESTER
+  RESIGN_RECEIVER
+  INCOMPLETE
+}
+
+enum XPReason {
+  WIN
+  DRAW
+  RESIGN
+  STREAK_BONUS
+  LEVEL_UP_BONUS
+  QUEST_COMPLETE
+  DAILY_LOGIN
+  GEM_MILESTONE
+  FIRST_SESSION_BONUS
+  DAILY_SESSION_BONUS
+}
+
+enum GemReason {
+  MATCH_MILESTONE
+  STREAK_MILESTONE
+  LEVEL_UP
+  QUEST_REWARD
+  SHOP_PURCHASE
+}
+
+// ── XPTransaction ─────────────────────────────────────────────────────────────
+
+model XPTransaction {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  amount    Int
+  reason    XPReason
+  matchId   Int?     @map("match_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_xp_transactions_user")
+  @@map("xp_transactions")
+}
+
+// ── GemTransaction ────────────────────────────────────────────────────────────
+
+model GemTransaction {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  amount    Int
+  reason    GemReason
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_gem_transactions_user")
+  @@map("gem_transactions")
 }
