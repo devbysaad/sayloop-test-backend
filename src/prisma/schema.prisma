@@ -21,30 +21,34 @@ model Course {
 }
 
 model User {
-  id                    Int                    @id @default(autoincrement())
-  clerkId               String                 @unique @map("clerk_id") @db.VarChar(255)
-  username              String?                @unique @db.VarChar(255)
-  firstName             String?                @map("first_name") @db.VarChar(255)
-  lastName              String?                @map("last_name") @db.VarChar(255)
-  email                 String                 @db.VarChar(255)
-  pfpSource             String?                @map("pfp_source") @db.VarChar(255)
-  points                Int                    @default(0)
-  streakLength          Int                    @default(0) @map("streak_length")
-  currentCourseId       Int?                   @map("current_course_id")
-  createdAt             DateTime               @default(now()) @map("created_at")
-  lastSubmission        DateTime?              @map("last_submission")
+  id              Int       @id @default(autoincrement())
+  clerkId         String    @unique @map("clerk_id") @db.VarChar(255)
+  username        String?   @unique @db.VarChar(255)
+  firstName       String?   @map("first_name") @db.VarChar(255)
+  lastName        String?   @map("last_name") @db.VarChar(255)
+  email           String    @db.VarChar(255)
+  pfpSource       String?   @map("pfp_source") @db.VarChar(255)
+  points          Int       @default(0)
+  streakLength    Int       @default(0) @map("streak_length")
+  currentCourseId Int?      @map("current_course_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  lastSubmission  DateTime? @map("last_submission")
 
-  // ── Economy fields ──────────────────────────────────────────────────────────
-  xp                    Int                    @default(0)
-  gems                  Int                    @default(0)
-  level                 Int                    @default(1)
-  lastActiveDate        DateTime?              @map("last_active_date")
-  totalMatches          Int                    @default(0) @map("total_matches")
-  totalWins             Int                    @default(0) @map("total_wins")
-  totalDraws            Int                    @default(0) @map("total_draws")
-  totalResigns          Int                    @default(0) @map("total_resigns")
-  xpThisWeek            Int                    @default(0) @map("xp_this_week")
-  weekStartDate         DateTime?              @map("week_start_date")
+  // ── Onboarding fields ──────────────────────────────────────────────────────
+  learningLanguage String? @map("learning_language") @db.VarChar(10)
+  interests        Json?   @default("[]")
+
+  // ── Economy fields ─────────────────────────────────────────────────────────
+  xp            Int       @default(0)
+  gems          Int       @default(0)
+  level         Int       @default(1)
+  lastActiveDate DateTime? @map("last_active_date")
+  totalMatches  Int       @default(0) @map("total_matches")
+  totalWins     Int       @default(0) @map("total_wins")
+  totalDraws    Int       @default(0) @map("total_draws")
+  totalResigns  Int       @default(0) @map("total_resigns")
+  xpThisWeek    Int       @default(0) @map("xp_this_week")
+  weekStartDate DateTime? @map("week_start_date")
 
   exerciseAttempts      ExerciseAttempt[]
   followers             Follow[]               @relation("Followed")
@@ -64,6 +68,7 @@ model User {
   @@index([xpThisWeek(sort: Desc), id], map: "ix_users_xp_week_desc")
   @@index([clerkId], map: "ix_users_clerk_id")
   @@index([currentCourseId], map: "ix_users_current_course")
+  @@index([learningLanguage], map: "ix_users_learning_language")
   @@map("users")
 }
 
@@ -343,8 +348,6 @@ enum GemReason {
   SHOP_PURCHASE
 }
 
-// ── XPTransaction ─────────────────────────────────────────────────────────────
-
 model XPTransaction {
   id        Int      @id @default(autoincrement())
   userId    Int      @map("user_id")
@@ -357,8 +360,6 @@ model XPTransaction {
   @@index([userId, createdAt(sort: Desc)], map: "idx_xp_transactions_user")
   @@map("xp_transactions")
 }
-
-// ── GemTransaction ────────────────────────────────────────────────────────────
 
 model GemTransaction {
   id        Int       @id @default(autoincrement())
