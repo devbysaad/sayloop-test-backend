@@ -83,7 +83,7 @@ model QuestDefinition {
   @@map("quest_definition")
 }
 
-model MonthlyChallengeDefinition {
+model MonthlyChallengeDefinition { 
   id                    Int                    @id @default(autoincrement())
   code                  String                 @unique @db.VarChar(255)
   target                Int
