@@ -4,6 +4,7 @@ require('./config/env');
 const http = require('http');
 const app = require('./app');
 const database = require('./config/database');
+const { getDb } = require('./config/database');
 const { Server } = require('socket.io');
 const { verifyToken } = require('@clerk/clerk-sdk-node');
 const { registerSessionHandlers } = require('./modules/sessions/session.socket');
@@ -13,7 +14,7 @@ const { startScheduler } = require('./utils/scheduler');
 const PORT = process.env.PORT || 4000;
 const server = http.createServer(app);
 
-const prisma = database.prisma ?? database;
+const _prismaLegacy = database.prisma ?? database;
 
 // ── Online user tracking ──────────────────────────────────────────────────────
 const onlineUsers = new Set();
@@ -38,13 +39,12 @@ io.use(async (socket, next) => {
   if (token) {
     try {
       const payload = await verifyToken(token, {
-        secretKey: process.env.CLERK_SECRET_KEY, // FIX: was CLERK_SECRET_KEY — that env var doesn't exist on the backend
+        secretKey: process.env.CLERK_SECRET_KEY,
       });
       try {
-        const user = await prisma.user.findUnique({
-          where: { clerkId: payload.sub },
-          select: { id: true },
-        });
+        const user = await getDb((db) =>
+          db.user.findUnique({ where: { clerkId: payload.sub }, select: { id: true } })
+        );
         if (user) {
           socket.dbUserId = user.id;
           socket.join(`user:${user.id}`);
@@ -65,10 +65,9 @@ io.use(async (socket, next) => {
   // ── Path 2: clerkId direct lookup ────────────────────────────────────────
   if (clerkId) {
     try {
-      const user = await prisma.user.findUnique({
-        where: { clerkId },
-        select: { id: true },
-      });
+      const user = await getDb((db) =>
+        db.user.findUnique({ where: { clerkId }, select: { id: true } })
+      );
       if (user) {
         socket.dbUserId = user.id;
         socket.join(`user:${user.id}`);
@@ -79,13 +78,8 @@ io.use(async (socket, next) => {
       console.warn(`[Socket] clerkId not in DB: ${clerkId}`);
       return next(new Error('User not synced. Call /api/users/sync first.'));
     } catch (err) {
-      const isDbError = err.message?.includes("Can't reach database") || err.message?.includes('connect');
-      if (isDbError) {
-        console.error(`[Socket] Database unreachable: ${err.message}`);
-        return next(new Error('Database unavailable — please try again shortly.'));
-      }
       console.error(`[Socket] DB lookup failed: ${err.message}`);
-      return next(new Error('Auth resolution failed'));
+      return next(new Error('Database unavailable — please try again shortly.'));
     }
   }
 
@@ -110,24 +104,39 @@ io.on('connection', (socket) => {
 registerSessionHandlers(io);
 registerMatchHandlers(io);
 
-const startServer = async () => {
-  if (connectFn) {
-    await connectFn();
-  } else {
-    await prisma.$connect();
-    console.log('✓ Database connected (Prisma)');
-  }
+const startServer = () => {
+  // ── Start HTTP/WS server immediately ────────────────────────────────────────
+  // Do NOT gate server.listen() on DB connectivity. The socket auth middleware
+  // already handles DB errors gracefully per-request. This ensures the frontend
+  // can connect to the server even if Neon DB is slow to wake up.
   server.listen(PORT, () => {
-    console.log(`✓ HTTP  server running on port ${PORT}`);
-    console.log(`✓ WS    server running on port ${PORT}`);
+    console.log(`✓ HTTP  server listening on port ${PORT}`);
+    console.log(`✓ WS    server listening on port ${PORT}`);
     startScheduler();
+  });
+
+  // ── Attempt DB connection in background ─────────────────────────────────────
+  // If Neon is suspended or creds are missing locally, the server still starts.
+  // Requests requiring DB will get errors until the connection is restored.
+  if (!process.env.DATABASE_URL) {
+    console.warn('⚠️  DATABASE_URL not set — DB features disabled. Copy .env.example to .env and fill in your credentials.');
+    return;
+  }
+
+  const dbConnect = connectFn
+    ? connectFn()
+    : prisma.$connect().then(() => console.log('✓ Database connected (Prisma)'));
+
+  dbConnect.catch((err) => {
+    console.warn(`⚠️  DB connect failed: ${err.message}`);
+    console.warn('   Check Neon console — compute may be suspended. Requests requiring DB will fail until restored.');
   });
 };
 
 const shutdown = async (signal) => {
   console.log(`\n${signal} received — shutting down...`);
   server.close(async () => {
-    await prisma.$disconnect();
+    await _prismaLegacy.$disconnect().catch(() => {});
     console.log('✓ Server closed');
   });
 };

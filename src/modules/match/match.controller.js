@@ -1,6 +1,6 @@
 const matchesService = require('./match.service');
 const { emitToUser } = require('./match.socket');
-const prisma = require('../../config/database');
+const { getDb } = require('../../config/database');
 
 // ─── Controller ───────────────────────────────────────────────────────────────
 
@@ -30,9 +30,9 @@ const requestMatch = async (req, res) => {
         });
       } else {
         // Just emit a badge count update to their general user room
-        const pendingCount = await prisma.match.count({
+        const pendingCount = await getDb((db) => db.match.count({
           where: { receiverId: result.receiverId, status: 'PENDING' },
-        });
+        }));
         io.to(`user:${result.receiverId}`).emit('match:badge_count', {
           pendingRequests: pendingCount,
         });
@@ -101,8 +101,8 @@ const rejectMatch = async (req, res) => {
     const userId = req.dbUserId;
 
     // Get the match first so we know who the requester is
-    const prisma = require('../../config/database');
-    const match = await prisma.match.findUnique({ where: { id: Number(matchId) } });
+    const { getDb: getDbLocal } = require('../../config/database');
+    const match = await getDbLocal((db) => db.match.findUnique({ where: { id: Number(matchId) } }));
 
     const result = await matchesService.rejectMatch(Number(matchId), userId);
     const io = req.app.get('io');
@@ -156,14 +156,13 @@ const getMatchHistory = async (req, res) => {
  */
 const getMatchById = async (req, res) => {
   try {
-    const prisma = require('../../config/database');
-    const match = await prisma.match.findUnique({
+    const match = await getDb((db) => db.match.findUnique({
       where: { id: Number(req.params.matchId) },
       include: {
         requester: { select: { id: true, username: true, firstName: true, pfpSource: true } },
         receiver: { select: { id: true, username: true, firstName: true, pfpSource: true } },
       },
-    });
+    }));
     if (!match) return res.status(404).json({ success: false, message: 'Match not found' });
     return res.status(200).json({ success: true, data: { ...match, status: match.status.toLowerCase() } });
   } catch (err) {

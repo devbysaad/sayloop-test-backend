@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { getDb } = require('../../config/database');
 const { setSocketRoom, initSessionForRoom, startTimerForSession } = require('../sessions/session.socket');
 
 // ─── Socket Page Tracking Maps ────────────────────────────────────────────────
@@ -72,14 +72,26 @@ function registerMatchHandlers(io) {
         // Fired when a user clicks "Let's Go" on the MatchFoundModal.
         // Once BOTH users for a match have confirmed, emit match:session-start.
         socket.on('match:confirm-ready', async ({ matchId }) => {
-            if (!matchId) return;
+            if (!matchId) {
+                console.warn('[Match] confirm-ready: no matchId provided');
+                return;
+            }
 
             try {
                 // Verify user is part of this match
-                const match = await prisma.match.findUnique({ where: { id: matchId } });
-                if (!match) return;
-                if (match.requesterId !== userId && match.receiverId !== userId) return;
-                if (match.status !== 'ACCEPTED') return;
+                const match = await getDb((db) => db.match.findUnique({ where: { id: matchId } }));
+                if (!match) {
+                    console.warn(`[Match] confirm-ready: match ${matchId} not found in DB`);
+                    return;
+                }
+                if (match.requesterId !== userId && match.receiverId !== userId) {
+                    console.warn(`[Match] confirm-ready: user ${userId} is not part of match ${matchId}`);
+                    return;
+                }
+                if (match.status !== 'ACCEPTED') {
+                    console.warn(`[Match] confirm-ready: match ${matchId} status is '${match.status}', expected 'ACCEPTED'`);
+                    return;
+                }
 
                 // Track readiness
                 if (!readyMap.has(matchId)) readyMap.set(matchId, new Set());
@@ -93,13 +105,12 @@ function registerMatchHandlers(io) {
 
                     // Update match status to CONFIRMED
                     const sessionId = match.sessionId || `session_${matchId}_${Date.now()}`;
-                    await prisma.match.update({
+                    await getDb((db) => db.match.update({
                         where: { id: matchId },
                         data: { status: 'CONFIRMED', sessionId },
-                    });
+                    }));
 
                     // Join both users to the session socket room
-                    // Find all sockets for each user and join them
                     const requesterSockets = await io.in(`user:${match.requesterId}`).fetchSockets();
                     const receiverSockets = await io.in(`user:${match.receiverId}`).fetchSockets();
                     for (const s of [...requesterSockets, ...receiverSockets]) {
@@ -128,9 +139,9 @@ function registerMatchHandlers(io) {
 
             try {
                 // Verify this user is part of the match that owns this session
-                const match = await prisma.match.findFirst({
+                const match = await getDb((db) => db.match.findFirst({
                     where: { sessionId, OR: [{ requesterId: userId }, { receiverId: userId }] },
-                });
+                }));
                 if (!match) {
                     socket.emit('session-error', { message: 'Session not found or access denied' });
                     return;
@@ -141,18 +152,18 @@ function registerMatchHandlers(io) {
 
                 // Update match to IN_SESSION if not already
                 if (match.status === 'CONFIRMED' || match.status === 'ACCEPTED') {
-                    await prisma.match.update({
+                    await getDb((db) => db.match.update({
                         where: { id: match.id },
                         data: { status: 'IN_SESSION' },
-                    });
+                    }));
                 }
 
                 // Determine partner and find their socketId
                 const partnerId = match.requesterId === userId ? match.receiverId : match.requesterId;
-                const partner = await prisma.user.findUnique({
+                const partner = await getDb((db) => db.user.findUnique({
                     where: { id: partnerId },
                     select: { id: true, username: true, firstName: true, pfpSource: true },
-                });
+                }));
 
                 // Look up partner's socket (already in session room)
                 let partnerSocketId = null;
@@ -178,8 +189,6 @@ function registerMatchHandlers(io) {
                 socket.to(sessionId).emit('partner-joined', { userId, socketId: socket.id });
 
                 // ── START SESSION TIMER when both users are now in the room ──────
-                // We start the timer the moment the second user joins.
-                // initSessionForRoom is idempotent — safe to call from either user.
                 const sessionSockets = await io.in(sessionId).fetchSockets();
                 const userIdsInRoom = [...new Set(sessionSockets.map(s => s.dbUserId).filter(Boolean))];
                 console.log(`[Match] Unique users in room ${sessionId}:`, userIdsInRoom);

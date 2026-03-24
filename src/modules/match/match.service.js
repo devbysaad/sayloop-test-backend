@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { getDb } = require('../../config/database');
 
 const MATCH_TTL_MS = 5 * 60 * 1000;
 
@@ -11,8 +11,8 @@ const matchesService = {
 
     // Verify both users exist
     const [requester, receiver] = await Promise.all([
-      prisma.user.findUnique({ where: { id: userId }, select: { id: true } }),
-      prisma.user.findUnique({ where: { id: partnerId }, select: { id: true } }),
+      getDb((db) => db.user.findUnique({ where: { id: userId }, select: { id: true } })),
+      getDb((db) => db.user.findUnique({ where: { id: partnerId }, select: { id: true } })),
     ]);
 
     if (!requester) {
@@ -23,7 +23,7 @@ const matchesService = {
     }
 
     // Check for existing PENDING match between these users
-    const existing = await prisma.match.findFirst({
+    const existing = await getDb((db) => db.match.findFirst({
       where: {
         status: 'PENDING',
         OR: [
@@ -35,7 +35,7 @@ const matchesService = {
         requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
         receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
       },
-    });
+    }));
 
     if (existing) {
       // If it's still pending, return it — don't create a duplicate
@@ -43,8 +43,7 @@ const matchesService = {
     }
 
     // Mark any stale matches between these two users as ABANDONED
-    // (e.g. if they previously accepted a match but never completed the session)
-    await prisma.match.updateMany({
+    await getDb((db) => db.match.updateMany({
       where: {
         status: { in: ['ACCEPTED', 'CONFIRMED', 'IN_SESSION'] },
         OR: [
@@ -53,29 +52,29 @@ const matchesService = {
         ],
       },
       data: { status: 'ABANDONED' },
-    });
+    }));
 
-    const match = await prisma.match.create({
+    const match = await getDb((db) => db.match.create({
       data: { requesterId: userId, receiverId: partnerId, topic, status: 'PENDING' },
       include: {
         requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
         receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
       },
-    });
+    }));
 
     return match;
   },
 
   async acceptMatch(matchId, userId) {
     // Atomic: only update if status is still PENDING — prevents race conditions
-    const updated = await prisma.match.updateMany({
+    const updated = await getDb((db) => db.match.updateMany({
       where: { id: matchId, receiverId: userId, status: 'PENDING' },
       data: { status: 'ACCEPTED', sessionId: `session_${matchId}_${Date.now()}` },
-    });
+    }));
 
     if (updated.count === 0) {
       // Figure out why it failed for a better error message
-      const match = await prisma.match.findUnique({ where: { id: matchId } });
+      const match = await getDb((db) => db.match.findUnique({ where: { id: matchId } }));
       if (!match) throw Object.assign(new Error('Match not found'), { status: 404 });
       if (match.receiverId !== userId) throw Object.assign(new Error('Not authorised'), { status: 403 });
       if (match.status !== 'PENDING') throw Object.assign(new Error('Match is no longer pending'), { status: 409 });
@@ -83,25 +82,25 @@ const matchesService = {
     }
 
     // Fetch the full updated match with relations
-    const match = await prisma.match.findUnique({
+    const match = await getDb((db) => db.match.findUnique({
       where: { id: matchId },
       include: {
         requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
         receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
       },
-    });
+    }));
 
     return match;
   },
 
   async rejectMatch(matchId, userId) {
-    const updated = await prisma.match.updateMany({
+    const updated = await getDb((db) => db.match.updateMany({
       where: { id: matchId, receiverId: userId, status: 'PENDING' },
       data: { status: 'REJECTED' },
-    });
+    }));
 
     if (updated.count === 0) {
-      const match = await prisma.match.findUnique({ where: { id: matchId } });
+      const match = await getDb((db) => db.match.findUnique({ where: { id: matchId } }));
       if (!match) throw Object.assign(new Error('Match not found'), { status: 404 });
       if (match.receiverId !== userId) throw Object.assign(new Error('Not authorised'), { status: 403 });
       if (match.status !== 'PENDING') throw Object.assign(new Error('Match is no longer pending'), { status: 409 });
@@ -112,7 +111,7 @@ const matchesService = {
   },
 
   async getActiveMatches(userId) {
-    const matches = await prisma.match.findMany({
+    const matches = await getDb((db) => db.match.findMany({
       where: {
         status: { in: ['PENDING', 'ACCEPTED', 'CONFIRMED'] },
         OR: [{ requesterId: userId }, { receiverId: userId }],
@@ -122,7 +121,7 @@ const matchesService = {
         requester: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
         receiver: { select: { id: true, username: true, firstName: true, pfpSource: true, points: true } },
       },
-    });
+    }));
 
     return matches.map(m => ({ ...m, status: m.status.toLowerCase() }));
   },
@@ -135,8 +134,8 @@ const matchesService = {
     };
 
     const [total, matches] = await Promise.all([
-      prisma.match.count({ where }),
-      prisma.match.findMany({
+      getDb((db) => db.match.count({ where })),
+      getDb((db) => db.match.findMany({
         where,
         skip,
         take: limit,
@@ -145,7 +144,7 @@ const matchesService = {
           requester: { select: { id: true, username: true, firstName: true, pfpSource: true } },
           receiver: { select: { id: true, username: true, firstName: true, pfpSource: true } },
         },
-      }),
+      })),
     ]);
 
     return {
@@ -158,12 +157,12 @@ const matchesService = {
   },
 
   async completeMatch(sessionId) {
-    const match = await prisma.match.findFirst({
+    const match = await getDb((db) => db.match.findFirst({
       where: { sessionId, status: { in: ['ACCEPTED', 'CONFIRMED', 'IN_SESSION'] } },
-    });
+    }));
     if (!match) return null;
-    return prisma.match.update({ where: { id: match.id }, data: { status: 'COMPLETED' } });
+    return getDb((db) => db.match.update({ where: { id: match.id }, data: { status: 'COMPLETED' } }));
   },
 };
 
-module.exports = matchesService;
+module.exports = matchesService;

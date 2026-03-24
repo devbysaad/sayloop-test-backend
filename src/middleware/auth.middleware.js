@@ -1,5 +1,5 @@
 const { ClerkExpressWithAuth } = require('@clerk/clerk-sdk-node');
-const prisma = require('../config/database');
+const { getDb } = require('../config/database');
 
 // FIX: Pass secretKey explicitly. Without it, some versions of the Clerk SDK
 // do NOT automatically read CLERK_SECRET_KEY from process.env when called
@@ -46,10 +46,12 @@ const resolveDbUser = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized — no valid Clerk session' });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { clerkId },
-      select: { id: true },
-    });
+    const user = await getDb((db) =>
+      db.user.findUnique({
+        where: { clerkId },
+        select: { id: true },
+      })
+    );
 
     if (!user) {
       return res.status(401).json({

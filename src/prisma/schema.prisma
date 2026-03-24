@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")  // pooled endpoint (app traffic)
+  directUrl = env("DIRECT_URL")    // direct endpoint (prisma migrate)
 }
 
 model Course {
@@ -300,7 +301,7 @@ model Match {
   requesterId Int           @map("requester_id")
   receiverId  Int           @map("receiver_id")
   topic       String        @db.VarChar(100)
-  status      String        @default("PENDING") @db.VarChar(20)
+  status      MatchStatus   @default(PENDING)
   sessionId   String?       @map("session_id") @db.VarChar(255)
   outcome     MatchOutcome?
   xpAwarded   Boolean       @default(false) @map("xp_awarded")
@@ -317,6 +318,17 @@ model Match {
 }
 
 // ── Enums ──────────────────────────────────────────────────────────────────────
+
+enum MatchStatus {
+  PENDING
+  ACCEPTED
+  CONFIRMED
+  IN_SESSION
+  COMPLETED
+  REJECTED
+  ABANDONED
+  EXPIRED
+}
 
 enum MatchOutcome {
   WIN_REQUESTER
@@ -358,6 +370,7 @@ model XPTransaction {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt(sort: Desc)], map: "idx_xp_transactions_user")
+  @@index([matchId], map: "idx_xp_transactions_match")
   @@map("xp_transactions")
 }
 

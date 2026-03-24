@@ -1,28 +1,28 @@
-const prisma = require('../../config/database');
+const { getDb } = require('../../config/database');
 
 // ─── Sync (upsert) on every login ─────────────────────────────────────────────
 const syncUser = async (clerkId, { email, firstName, lastName, pfpSource }) => {
-  return prisma.user.upsert({
+  return getDb((db) => db.user.upsert({
     where: { clerkId },
     update: { email, firstName, lastName, pfpSource },
     create: { clerkId, email, firstName, lastName, pfpSource },
-  });
+  }));
 };
 
 // ─── Lookup helpers ───────────────────────────────────────────────────────────
 const getUserByClerkId = async (clerkId) => {
-  return prisma.user.findUnique({ where: { clerkId } });
+  return getDb((db) => db.user.findUnique({ where: { clerkId } }));
 };
 
 const getUserById = async (id) => {
-  const user = await prisma.user.findUnique({ where: { id } });
+  const user = await getDb((db) => db.user.findUnique({ where: { id } }));
   if (!user) throw new Error('User not found');
   return user;
 };
 
 // ─── Full profile ─────────────────────────────────────────────────────────────
 const getMyProfile = async (userId) => {
-  return prisma.user.findUnique({
+  return getDb((db) => db.user.findUnique({
     where: { id: userId },
     select: {
       id: true, clerkId: true, username: true,
@@ -38,7 +38,7 @@ const getMyProfile = async (userId) => {
         },
       },
     },
-  });
+  }));
 };
 
 // ─── Update profile (including onboarding fields) ─────────────────────────────
@@ -51,51 +51,38 @@ const updateProfile = async (userId, { username, firstName, lastName, pfpSource,
   if (learningLanguage !== undefined) data.learningLanguage = learningLanguage;
   if (interests !== undefined) data.interests = interests;
 
-  return prisma.user.update({ where: { id: userId }, data });
+  return getDb((db) => db.user.update({ where: { id: userId }, data }));
 };
 
 // ─── Browse users (for match page) ───────────────────────────────────────────
-// Returns only users who are currently online and available for matching.
-//
-// Key insight: completeMatch() is never called when sessions end, so matches
-// permanently stay in CONFIRMED / IN_SESSION status. We auto-cleanup stale
-// matches here and only block users who are in a genuinely active state.
-const PENDING_TTL_MS = 5 * 60 * 1000;  // 5 min  — stale unanswered requests
-const TRANSITION_TTL_MS = 10 * 60 * 1000; // 10 min — accepted but never started
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min — abandoned sessions
+const PENDING_TTL_MS = 5 * 60 * 1000;
+const TRANSITION_TTL_MS = 10 * 60 * 1000;
+const SESSION_TTL_MS = 30 * 60 * 1000;
 
 const getBrowseUsers = async (excludeUserId, onlineUserIds = new Set()) => {
-  // Convert Set to array for Prisma `in` filter
   const onlineIds = [...onlineUserIds].filter(id => id !== excludeUserId);
-
   if (onlineIds.length === 0) return [];
 
   const now = Date.now();
 
-  // ── Auto-cleanup stale matches so they stop blocking users ────────────────
+  // Auto-cleanup stale matches
   await Promise.all([
-    // PENDING older than 5 min → EXPIRED
-    prisma.match.updateMany({
+    getDb((db) => db.match.updateMany({
       where: { status: 'PENDING', createdAt: { lt: new Date(now - PENDING_TTL_MS) } },
       data: { status: 'EXPIRED' },
-    }),
-    // ACCEPTED / CONFIRMED older than 10 min → ABANDONED
-    prisma.match.updateMany({
+    })),
+    getDb((db) => db.match.updateMany({
       where: { status: { in: ['ACCEPTED', 'CONFIRMED'] }, createdAt: { lt: new Date(now - TRANSITION_TTL_MS) } },
       data: { status: 'ABANDONED' },
-    }),
-    // IN_SESSION older than 30 min → COMPLETED (session ended without cleanup)
-    prisma.match.updateMany({
+    })),
+    getDb((db) => db.match.updateMany({
       where: { status: 'IN_SESSION', createdAt: { lt: new Date(now - SESSION_TTL_MS) } },
       data: { status: 'COMPLETED' },
-    }),
+    })),
   ]);
 
-  // ── Find who is genuinely busy ────────────────────────────────────────────
-  // Only a recent PENDING match blocks a user (they are waiting for a response).
-  // ACCEPTED/CONFIRMED/IN_SESSION users are either mid-flow (won't be browsing)
-  // or abandoned (should be available). No need to hide them from browse.
-  const busyMatches = await prisma.match.findMany({
+  // Find who is genuinely busy
+  const busyMatches = await getDb((db) => db.match.findMany({
     where: {
       status: 'PENDING',
       OR: [
@@ -104,7 +91,7 @@ const getBrowseUsers = async (excludeUserId, onlineUserIds = new Set()) => {
       ],
     },
     select: { requesterId: true, receiverId: true, status: true, id: true },
-  });
+  }));
 
   const onlineIdSet = new Set(onlineIds);
   const busyIds = new Set();
@@ -113,14 +100,13 @@ const getBrowseUsers = async (excludeUserId, onlineUserIds = new Set()) => {
     if (onlineIdSet.has(m.receiverId)) busyIds.add(m.receiverId);
   }
 
-  // Available = online AND not busy
   const availableIds = onlineIds.filter(id => !busyIds.has(id));
 
   console.log(`[Browse] caller=${excludeUserId} onlineIds=${JSON.stringify(onlineIds)} busyMatches=${busyMatches.map(m => `#${m.id}(${m.status} ${m.requesterId}↔${m.receiverId})`).join(',')} busyIds=${[...busyIds]} → availableIds=${JSON.stringify(availableIds)}`);
 
   if (availableIds.length === 0) return [];
 
-  return prisma.user.findMany({
+  return getDb((db) => db.user.findMany({
     where: {
       id: { in: availableIds },
       firstName: { not: null },
@@ -135,21 +121,21 @@ const getBrowseUsers = async (excludeUserId, onlineUserIds = new Set()) => {
     },
     orderBy: { points: 'desc' },
     take: 50,
-  });
+  }));
 };
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 const getUserStats = async (userId) => {
-  const user = await prisma.user.findUnique({
+  const user = await getDb((db) => db.user.findUnique({
     where: { id: userId },
     select: { id: true, points: true, streakLength: true, lastSubmission: true },
-  });
+  }));
   if (!user) throw new Error('User not found');
 
-  const [lessonsCompleted, rank] = await prisma.$transaction([
-    prisma.lessonCompletion.count({ where: { userId } }),
-    prisma.user.count({ where: { points: { gt: user.points } } }),
-  ]);
+  const [lessonsCompleted, rank] = await getDb((db) => db.$transaction([
+    db.lessonCompletion.count({ where: { userId } }),
+    db.user.count({ where: { points: { gt: user.points } } }),
+  ]));
 
   return {
     points: user.points,
@@ -162,17 +148,17 @@ const getUserStats = async (userId) => {
 
 // ─── Points & streak ──────────────────────────────────────────────────────────
 const addPoints = async (userId, points) => {
-  return prisma.user.update({
+  return getDb((db) => db.user.update({
     where: { id: userId },
     data: { points: { increment: points } },
-  });
+  }));
 };
 
 const updateStreak = async (userId) => {
-  const user = await prisma.user.findUnique({
+  const user = await getDb((db) => db.user.findUnique({
     where: { id: userId },
     select: { streakLength: true, lastSubmission: true },
-  });
+  }));
 
   const now = new Date();
   const lastSub = user.lastSubmission ? new Date(user.lastSubmission) : null;
@@ -182,10 +168,10 @@ const updateStreak = async (userId) => {
   if (!lastSub || diffHours >= 48) newStreak = 1;
   else if (diffHours >= 24) newStreak += 1;
 
-  return prisma.user.update({
+  return getDb((db) => db.user.update({
     where: { id: userId },
     data: { streakLength: newStreak, lastSubmission: now },
-  });
+  }));
 };
 
 module.exports = {

@@ -1,9 +1,22 @@
 require('dotenv').config();
 
-const required = ['DATABASE_URL', 'PORT', 'FRONTEND_URL', 'CLERK_SECRET_KEY'];
+// ── Env validation ────────────────────────────────────────────────────────────
+// In production: throw immediately on any missing required var.
+// In development: warn so the server still starts (useful when DB is down
+//   locally but you want to test unprotected routes).
+const isProd = process.env.NODE_ENV === 'production';
+
+const required = ['DATABASE_URL', 'CLERK_SECRET_KEY', 'PORT', 'FRONTEND_URL'];
 
 required.forEach((key) => {
-  if (!process.env[key]) throw new Error(`Missing env variable: ${key}`);
+  if (!process.env[key]) {
+    const msg = `[env] Missing required env variable: ${key}`;
+    if (isProd) {
+      throw new Error(msg);
+    } else {
+      console.warn(`⚠️  ${msg} — server will start but some features will fail`);
+    }
+  }
 });
 
 module.exports = {
