@@ -19,6 +19,7 @@ const aiRoute = require('./modules/ai/ai.route');
 const economyRoute = require('./modules/economy/economy.routes');
 
 const app = express();
+app.set('trust proxy', 1);
 
 // ── Global middleware ─────────────────────────────────────────────────────────
 app.use(logger);
