@@ -4,10 +4,12 @@ const controller = require('./user.controller');
 const { clerkAuth, protect } = require('../../middleware/auth.middleware');
 const { validate }           = require('../../middleware/validate.middleware');
 const { syncUserSchema, updateProfileSchema } = require('./user.validation');
+const { browseLimiter, authLimiter } = require('../../middleware/rateLimit.middleware');
 
 // POST /api/users/sync
 // clerkAuth only — resolveDbUser cannot run before the user exists in DB yet
 router.post('/sync',
+  authLimiter,
   clerkAuth,
   validate(syncUserSchema),
   controller.syncUser,
@@ -36,6 +38,7 @@ router.get('/me/stats',
 // Returns other real users for the match browse tab.
 // Must come BEFORE any /:id route to avoid being caught as a param.
 router.get('/browse',
+  browseLimiter,
   protect,
   controller.browseUsers,
 );

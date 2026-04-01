@@ -181,19 +181,19 @@ async function endSession(io, sessionId, { resignedUserId = null } = {}) {
   // ── Find the matchId from sessionId ──────────────────────────────────────
   let matchId = null;
   try {
-    const prisma = require('../../config/database');
-    const match = await prisma.match.findFirst({
+    const { getDb } = require('../../config/database');
+    const match = await getDb((db) => db.match.findFirst({
       where: { sessionId },
       select: { id: true },
-    });
+    }));
     if (match) {
       matchId = match.id;
       // Update match outcome if not INCOMPLETE
       if (outcome !== 'INCOMPLETE') {
-        await prisma.match.update({
+        await getDb((db) => db.match.update({
           where: { id: matchId },
           data: { outcome, xpAwarded: true, status: 'COMPLETED' },
-        });
+        }));
       }
     }
   } catch (dbErr) {
@@ -393,6 +393,12 @@ function registerSessionHandlers(io) {
     // ── Chat & debate ──────────────────────────────────────────────────────
     socket.on('chat-message', (data) => emitToRoom('chat-message', data));
     socket.on('debate-argument', (data) => emitToRoom('debate-argument', data));
+
+    // ── Emoji reactions ────────────────────────────────────────────────────
+    socket.on('emoji:react', ({ emoji }) => {
+      if (typeof emoji !== 'string') return;
+      emitToRoom('emoji:react', { emoji, fromUserId: userId });
+    });
 
     // ── Draw ───────────────────────────────────────────────────────────────
     socket.on('offer-draw', () => emitToRoom('draw-received'));

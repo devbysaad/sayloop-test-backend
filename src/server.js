@@ -21,9 +21,18 @@ const onlineUsers = new Set();
 app.set('onlineUsers', onlineUsers);
 const connectFn = database.connectWithRetry ?? null;
 
+const socketOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://sayloop-test.vercel.app',
+];
+if (process.env.FRONTEND_URL && !socketOrigins.includes(process.env.FRONTEND_URL)) {
+  socketOrigins.push(process.env.FRONTEND_URL);
+}
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: socketOrigins,
     credentials: true,
   },
 });
