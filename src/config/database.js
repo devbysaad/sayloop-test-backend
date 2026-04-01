@@ -3,8 +3,8 @@
 const { PrismaClient } = require('@prisma/client');
 
 // ── Connection-error codes that warrant a full client reconnect ───────────────
-const RECONNECT_CODES = new Set(['P1001', 'P1002']);
-const RECONNECT_MSGS  = ["Can't reach database", 'connect ECONNREFUSED', 'Connection refused', 'connection timeout'];
+const RECONNECT_CODES = new Set(['P1001', 'P1002', 'P2024']); // P2024 = pool timeout
+const RECONNECT_MSGS  = ["Can't reach database", 'connect ECONNREFUSED', 'Connection refused', 'connection timeout', 'connection pool'];
 
 function isConnectionError(err) {
   if (RECONNECT_CODES.has(err?.code)) return true;

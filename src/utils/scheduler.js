@@ -1,58 +1,35 @@
 'use strict';
 
 const cron = require('node-cron');
-const { PrismaClient } = require('@prisma/client');
+const { getDb } = require('../config/database');
 
 const MATCH_PENDING_TTL_MS  = 5  * 60 * 1000;   // 5 minutes for pending matches
 const MATCH_ACCEPTED_TTL_MS = 10 * 60 * 1000;   // 10 minutes for accepted matches
 
-// ── Dedicated Prisma client for scheduler ────────────────────────────────────
-// Isolated from the main app client so DB failures in cron jobs
-// never affect in-flight HTTP requests.
-let prisma = new PrismaClient({ log: ['error'] });
-
 // ── DB resilience wrapper ─────────────────────────────────────────────────────
 /**
- * Wraps a Prisma operation with retry + exponential backoff.
- * Reconnects the client on Neon cold-start / connection errors.
- * NEVER re-throws — so cron failures cannot crash PM2.
- *
- * @param {string}   label      - Job name for log messages
- * @param {Function} fn         - async (db: PrismaClient) => any
- * @param {number}   maxRetries - defaults to 3
+ * Wraps a getDb() call with retry + backoff.
+ * Uses the SHARED singleton Prisma client from database.js so the scheduler
+ * never opens extra connections on top of what the HTTP layer already holds.
+ * NEVER re-throws — cron failures must not crash PM2.
  */
 async function withResilience(label, fn, maxRetries = 3) {
-  let delay = 1000;
+  let delay = 2000;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await fn(prisma);
+      return await getDb(fn);
     } catch (err) {
-      const isConnErr =
-        err.message?.includes("Can't reach database") ||
-        err.message?.includes('connect ECONNREFUSED') ||
-        err.message?.includes('Connection refused') ||
-        err.code === 'P1001' ||   // Neon: can't reach DB server
-        err.code === 'P1002';     // Neon: DB timeout on pooler
-
       console.error(
         `[Scheduler][${label}] Attempt ${attempt}/${maxRetries} failed: ${err.message}`
       );
-
-      if (isConnErr && attempt < maxRetries) {
-        console.warn(
-          `[Scheduler][${label}] DB connection lost — reconnecting in ${delay}ms…`
-        );
-        try {
-          await prisma.$disconnect();
-        } catch (_) { /* ignore disconnect errors */ }
-        prisma = new PrismaClient({ log: ['error'] });
+      if (attempt < maxRetries) {
+        console.warn(`[Scheduler][${label}] Retrying in ${delay}ms…`);
         await new Promise((r) => setTimeout(r, delay));
-        delay = Math.min(delay * 2, 30_000); // exponential backoff, cap at 30s
-      } else if (attempt === maxRetries) {
+        delay = Math.min(delay * 2, 30_000);
+      } else {
         console.error(
           `[Scheduler][${label}] All ${maxRetries} attempts failed. Skipping this tick.`
         );
-        // ⚠️ DO NOT re-throw — would cause an unhandled rejection and crash PM2
         return null;
       }
     }
@@ -62,6 +39,7 @@ async function withResilience(label, fn, maxRetries = 3) {
 // ── Cron jobs ─────────────────────────────────────────────────────────────────
 
 const startScheduler = () => {
+
   // Expire stale PENDING matches every minute
   cron.schedule('* * * * *', async () => {
     await withResilience('expire-pending', async (db) => {
@@ -94,20 +72,16 @@ const startScheduler = () => {
   cron.schedule('0 0 * * 1', async () => {
     await withResilience('weekly-xp-reset', async (db) => {
       const result = await db.user.updateMany({ data: { xpThisWeek: 0 } });
-      console.log(
-        `[Scheduler] Weekly XP reset — cleared xpThisWeek for ${result.count} users`
-      );
+      console.log(`[Scheduler] Weekly XP reset — cleared xpThisWeek for ${result.count} users`);
     });
   });
 
   // Reset streaks at 00:01 UTC for users who missed yesterday
   cron.schedule('1 0 * * *', async () => {
     await withResilience('daily-streak-reset', async (db) => {
-      const nowUTC        = new Date();
-      const todayUTC      = new Date(
-        Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth(), nowUTC.getUTCDate())
-      );
-      const yesterdayUTC  = new Date(todayUTC.getTime() - 86_400_000);
+      const nowUTC       = new Date();
+      const todayUTC     = new Date(Date.UTC(nowUTC.getUTCFullYear(), nowUTC.getUTCMonth(), nowUTC.getUTCDate()));
+      const yesterdayUTC = new Date(todayUTC.getTime() - 86_400_000);
 
       const result = await db.user.updateMany({
         where: {
@@ -119,9 +93,7 @@ const startScheduler = () => {
         },
         data: { streakLength: 0 },
       });
-      console.log(
-        `[Scheduler] Streak reset — reset ${result.count} users who missed a day`
-      );
+      console.log(`[Scheduler] Streak reset — reset ${result.count} users who missed a day`);
     });
   });
 
@@ -139,9 +111,8 @@ const startScheduler = () => {
 };
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
-process.on('SIGTERM', async () => {
-  console.log('[Scheduler] SIGTERM — disconnecting Prisma');
-  await prisma.$disconnect().catch(() => {});
+process.on('SIGTERM', () => {
+  console.log('[Scheduler] SIGTERM received — scheduler stopped');
 });
 
 module.exports = { startScheduler };
