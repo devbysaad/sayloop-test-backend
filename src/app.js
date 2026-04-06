@@ -27,7 +27,7 @@ app.use(logger);
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
-  'https://sayloop-test.vercel.app',
+  'https://sayloop.vercel.app',
 ];
 // Always include the FRONTEND_URL from env (production Vercel URL)
 if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
